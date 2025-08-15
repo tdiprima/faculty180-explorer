@@ -23,7 +23,7 @@ class InterfolioPublicationRetriever:
             print(f"User data retrieved successfully: {user_data}")  # It's a count! :(
             
             try:
-                activity_data = self.far.get_user_data()
+                activity_data = self.far.get_user_data()  # Seems to be EVERYBODY's data. Won't take user_id.
                 print(f"Activity data retrieved: {len(activity_data) if activity_data else 0} activities")
             except Exception as activity_error:
                 print(f"Failed to retrieve activity data: {activity_error}")
