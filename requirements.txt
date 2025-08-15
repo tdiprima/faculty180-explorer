@@ -1,1 +1,3 @@
 interfolio_api
+httpx
+python-dotenv
