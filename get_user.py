@@ -1,12 +1,53 @@
+"""
+Using interfolio_api - can't find my user.
+
+# Fast search (default: max 3 users, early exit)
+FIRSTNAME="John" LASTNAME="Doe" python get_user.py
+
+# Exhaustive search (find up to 10 users)
+MAX_USERS=10 EARLY_EXIT=false FIRSTNAME="John" LASTNAME="Doe" python get_user.py
+
+# Custom configuration
+MAX_USERS=5 EARLY_EXIT=true FIRSTNAME="John" LASTNAME="Doe" python get_user.py
+"""
+
 import os
+import logging
+import sys
 
 from dotenv import load_dotenv
 from interfolio_api import InterfolioFAR
 
 load_dotenv()
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('user_search.log', encoding='utf-8')
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Performance monitoring
+import time
+from functools import wraps
+
+def timing_decorator(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time.time()
+        result = func(*args, **kwargs)
+        end = time.time()
+        logger.info(f"{func.__name__} took {end - start:.2f} seconds")
+        return result
+    return wrapper
+
 
 def connect_far():
+    """Connect to Faculty180 API."""
     return InterfolioFAR(
         public_key=os.getenv("INTERFOLIO_PUBLIC_KEY"),
         private_key=os.getenv("INTERFOLIO_PRIVATE_KEY"),
@@ -14,9 +55,13 @@ def connect_far():
     )
 
 
-def find_user_id():
+def find_user(max_users=3, early_exit=True):
     """
-    Search through all activity data to find the specified user's ID
+    Search through activity data to find the specified user and display their info.
+    
+    Args:
+        max_users: Maximum number of users to find before stopping (default: 3)
+        early_exit: Stop searching after finding max_users (default: True)
     """
     far = connect_far()
 
@@ -24,187 +69,268 @@ def find_user_id():
     lastname = os.getenv("LASTNAME")
 
     if not firstname or not lastname:
-        print("Error: FIRSTNAME and LASTNAME environment variables must be set")
+        logger.error("FIRSTNAME and LASTNAME environment variables must be set")
         return None
 
-    print(f"Searching for {firstname} {lastname} in Faculty180 activity data...")
+    logger.info(f"Searching for {firstname} {lastname} in Faculty180 activity data...")
+
+    # Pre-compile search terms for efficiency
+    firstname_lower = firstname.lower()
+    lastname_lower = lastname.lower()
+    name_variations = [
+        f"{firstname_lower} {lastname_lower}",
+        f"{lastname_lower}, {firstname_lower}",
+        f"{firstname_lower[0]}. {lastname_lower}",
+        f"{lastname_lower} {firstname_lower}",
+        f"{lastname_lower},{firstname_lower}",
+    ]
 
     try:
-        # Get all activity data - increase limit to search more thoroughly
+        # Get all activity data
         all_data = far.get_user_data(limit=2000)
-        print(f"Searching through {len(all_data)} activity sections...")
+        logger.info(f"Searching through {len(all_data)} activity sections...")
 
-        user_ids = set()
+        found_users = {}  # user_id -> user_info
+        sections_processed = 0
 
         for section_num, record in enumerate(all_data):
             if isinstance(record, dict) and "activities" in record:
                 section_name = record.get("section", {}).get("name", "Unknown Section")
                 activities = record["activities"]
+                sections_processed += 1
+
+                # Log progress every 10 sections
+                if sections_processed % 10 == 0:
+                    logger.info(f"Processed {sections_processed} sections, found {len(found_users)} users so far...")
 
                 for activity in activities:
                     if isinstance(activity, dict):
                         # Get user ID for this activity
                         user_id = activity.get("userid") or activity.get("facultyid")
+                        if not user_id:
+                            continue
 
-                        # Convert entire activity to string and search for the user
-                        activity_str = str(activity).lower()
+                        # Skip if we already found this user
+                        if str(user_id) in found_users:
+                            continue
 
-                        # Also specifically check the fields dict
+                        # Quick check: only process activities with name-like fields
                         fields = activity.get("fields", {})
-                        fields_str = str(fields).lower()
+                        has_name_fields = any(
+                            key for key in fields.keys() 
+                            if any(term in key.lower() for term in ['name', 'author', 'faculty', 'person', 'user'])
+                        )
+                        
+                        if not has_name_fields:
+                            continue
 
-                        # Look for the user in various combinations
-                        name_variations = [
-                            f"{firstname.lower()} {lastname.lower()}",
-                            f"{lastname.lower()}, {firstname.lower()}",
-                            f"{firstname[0].lower()}. {lastname.lower()}",
-                            f"{lastname.lower()} {firstname.lower()}",
-                            f"{lastname.lower()},{firstname.lower()}",
-                        ]
-
+                        # Optimized search: only check relevant fields first
                         found_match = False
-                        for name_var in name_variations:
-                            if name_var in activity_str or name_var in fields_str:
-                                found_match = True
-                                break
+                        matching_field = None
+                        matching_value = None
 
-                        # Also check if both first and last names appear separately
-                        if not found_match:
-                            if (
-                                firstname.lower() in activity_str
-                                and lastname.lower() in activity_str
-                            ) or (
-                                firstname.lower() in fields_str
-                                and lastname.lower() in fields_str
-                            ):
-                                found_match = True
-
-                        if found_match and user_id:
-                            user_ids.add(str(user_id))
-                            print(
-                                f"🎯 Found {firstname} {lastname} reference for user ID {user_id} in {section_name}"
-                            )
-
-                            # Show what matched
-                            for key, value in fields.items():
-                                if isinstance(value, str):
+                        # First pass: check only name-related fields
+                        for key, value in fields.items():
+                            if isinstance(value, str) and len(value) > 2:  # Skip very short values
+                                key_lower = key.lower()
+                                if any(term in key_lower for term in ['name', 'author', 'faculty', 'person']):
                                     value_lower = value.lower()
-                                    if any(
-                                        name in value_lower
-                                        for name in [
-                                            firstname.lower(),
-                                            lastname.lower(),
-                                        ]
-                                    ):
-                                        print(f"   {key}: {value}")
+                                    
+                                    # Check exact name variations first (fastest)
+                                    for name_var in name_variations:
+                                        if name_var in value_lower:
+                                            found_match = True
+                                            matching_field = key
+                                            matching_value = value
+                                            break
+                                    
+                                    if found_match:
+                                        break
+                                    
+                                    # Check if both names appear separately
+                                    if firstname_lower in value_lower and lastname_lower in value_lower:
+                                        found_match = True
+                                        matching_field = key
+                                        matching_value = value
+                                        break
+                        
+                        # Second pass: if not found, check all fields (slower)
+                        if not found_match:
+                            activity_str = str(activity).lower()
+                            for name_var in name_variations:
+                                if name_var in activity_str:
+                                    found_match = True
+                                    # Find which field actually matched
+                                    for key, value in fields.items():
+                                        if isinstance(value, str) and name_var in value.lower():
+                                            matching_field = key
+                                            matching_value = value
+                                            break
+                                    break
 
-        if user_ids:
-            print(
-                f"\n✅ Found {len(user_ids)} potential user ID(s) for {firstname} {lastname}: {list(user_ids)}"
-            )
+                        if found_match:
+                            # Store user info
+                            found_users[str(user_id)] = {
+                                'user_id': user_id,
+                                'sections_found': [section_name],
+                                'matching_fields': [{
+                                    'field': matching_field,
+                                    'value': matching_value
+                                }] if matching_field else []
+                            }
+                            
+                            logger.info(f"Found user {user_id} in {section_name} ({len(found_users)} total)")
+                            
+                            # Early exit if we found enough users
+                            if early_exit and len(found_users) >= max_users:
+                                logger.info(f"Found {max_users} users, stopping search early")
+                                break
+                
+                # Break outer loop too if early exit triggered
+                if early_exit and len(found_users) >= max_users:
+                    break
 
-            # Test each ID to see which one has publications
-            best_id = None
-            max_pubs = 0
-
-            for user_id in user_ids:
+        if found_users:
+            logger.info(f"✅ Found {len(found_users)} potential user(s) for {firstname} {lastname}")
+            
+            # Display found users with batch profile fetching
+            user_profiles = {}
+            
+            # Batch fetch profiles (if API supports it) or fetch sequentially with timeout
+            for user_id in found_users.keys():
                 try:
-                    result = get_user_publications(int(user_id))
-                    pub_count = len(result.get("publications", []))
-                    print(f"User {user_id}: {pub_count} publications")
-
-                    if pub_count > max_pubs:
-                        max_pubs = pub_count
-                        best_id = int(user_id)
-
-                    # Show sample publications to verify
-                    if pub_count > 0:
-                        print("  Sample publications:")
-                        for pub in result["publications"][:2]:
-                            title = pub.get("title", "No title")
-                            authors = pub.get("authors", "No authors")
-                            print(f"    - {title}")
-                            if authors and authors != "No authors":
-                                print(f"      Authors: {authors}")
-
+                    profile = far.get_user(user_id=str(user_id))
+                    user_profiles[user_id] = profile
                 except Exception as e:
-                    print(f"Error testing publications for user {user_id}: {e}")
+                    logger.warning(f"Could not fetch profile for user {user_id}: {e}")
+                    user_profiles[user_id] = None
+            
+            # Display results
+            for user_id, user_info in found_users.items():
+                logger.info(f"\n🎯 FOUND USER:")
+                logger.info(f"   User ID: {user_id}")
+                logger.info(f"   Found in sections: {', '.join(set(user_info['sections_found']))}")
+                
+                # Display matching fields to verify identity
+                if user_info['matching_fields']:
+                    logger.info(f"   Matching fields:")
+                    seen_values = set()
+                    for match in user_info['matching_fields']:
+                        if match['value'] not in seen_values:
+                            logger.info(f"      {match['field']}: {match['value']}")
+                            seen_values.add(match['value'])
+                
+                # Display profile verification
+                profile = user_profiles.get(user_id)
+                if profile and isinstance(profile, dict):
+                    # Extract name information if available
+                    first_name = profile.get('first_name') or profile.get('firstName') or 'N/A'
+                    last_name = profile.get('last_name') or profile.get('lastName') or 'N/A'
+                    email = profile.get('email') or 'N/A'
+                    
+                    logger.info(f"   Profile verification:")
+                    logger.info(f"      First Name: {first_name}")
+                    logger.info(f"      Last Name: {last_name}")
+                    logger.info(f"      Email: {email}")
+                elif profile:
+                    logger.info(f"   Profile: {profile}")
+                else:
+                    logger.info(f"   Profile: Could not fetch")
 
-            return best_id
+            return list(found_users.keys())
 
         else:
-            print(f"❌ No activities found containing '{firstname} {lastname}'")
-            print("\nTrying alternative search strategies...")
-
-            # Alternative: search for just the last name
-            print(f"Searching for just '{lastname}'...")
-            lastname_ids = set()
-
-            for record in all_data:
+            logger.warning(f"❌ No activities found containing '{firstname} {lastname}'")
+            
+            # Quick alternative search with just last name (limited scope)
+            logger.info(f"Trying quick search with just '{lastname}'...")
+            lastname_matches = []
+            sections_checked = 0
+            max_sections_for_fallback = min(50, len(all_data))  # Limit fallback search
+            
+            for record in all_data[:max_sections_for_fallback]:
                 if isinstance(record, dict) and "activities" in record:
+                    sections_checked += 1
                     activities = record["activities"]
                     for activity in activities:
                         if isinstance(activity, dict):
-                            user_id = activity.get("userid") or activity.get(
-                                "facultyid"
-                            )
-                            activity_str = str(activity).lower()
+                            user_id = activity.get("userid") or activity.get("facultyid")
+                            if not user_id:
+                                continue
+                            
+                            # Quick field check only
+                            fields = activity.get("fields", {})
+                            for key, value in fields.items():
+                                if (isinstance(value, str) and 
+                                    len(value) > 3 and 
+                                    lastname_lower in value.lower() and
+                                    any(term in key.lower() for term in ['name', 'author', 'faculty'])):
+                                    
+                                    lastname_matches.append({
+                                        'user_id': user_id,
+                                        'field': key,
+                                        'value': value
+                                    })
+                                    break
+                        
+                        # Limit total matches for performance
+                        if len(lastname_matches) >= 10:
+                            break
+                    
+                    if len(lastname_matches) >= 10:
+                        break
 
-                            if lastname.lower() in activity_str and user_id:
-                                lastname_ids.add(str(user_id))
-                                fields = activity.get("fields", {})
-                                print(f"Found '{lastname}' for user ID {user_id}")
-                                for key, value in fields.items():
-                                    if (
-                                        isinstance(value, str)
-                                        and lastname.lower() in value.lower()
-                                    ):
-                                        print(f"   {key}: {value}")
-
-            if lastname_ids:
-                print(f"Found {lastname} references for user IDs: {list(lastname_ids)}")
+            if lastname_matches:
+                logger.info(f"\n🔍 Found partial matches for '{lastname}' (checked {sections_checked} sections):")
+                seen_users = set()
+                for match in lastname_matches:
+                    if match['user_id'] not in seen_users:
+                        logger.info(f"   User ID {match['user_id']}: {match['field']} = {match['value']}")
+                        seen_users.add(match['user_id'])
 
             return None
 
     except Exception as e:
-        print(f"Error searching for {firstname} {lastname}: {e}")
+        logger.error(f"Error searching for {firstname} {lastname}: {e}")
         return None
 
 
 if __name__ == "__main__":
+    import time
+    
     firstname = os.getenv("FIRSTNAME")
     lastname = os.getenv("LASTNAME")
+    
+    # Allow command line override for max users and early exit
+    max_users = int(os.getenv("MAX_USERS", "3"))
+    early_exit = os.getenv("EARLY_EXIT", "true").lower() == "true"
 
     if not firstname or not lastname:
-        print("Error: Please set FIRSTNAME and LASTNAME environment variables")
+        logger.info("Error: Please set FIRSTNAME and LASTNAME environment variables")
+        logger.info("Optional: MAX_USERS=5 EARLY_EXIT=false for exhaustive search")
         exit(1)
 
-    print(f"🔍 Searching for {firstname} {lastname} in Faculty180...")
-    user_id = find_user_id()
-
-    if user_id:
-        print(f"\n🎉 Found {firstname} {lastname}! User ID: {user_id}")
-        print(f"\nGetting publications for {firstname} {lastname} (ID: {user_id})...")
-        result = get_user_publications(user_id)
-        publications = result.get("publications", [])
-
-        if publications:
-            print(
-                f"\n📚 Found {len(publications)} publications for {firstname} {lastname}:"
-            )
-            for i, pub in enumerate(publications, 1):
-                title = pub.get("title") or "(untitled)"
-                year = pub.get("year") or "n.d."
-                venue = pub.get("venue") or ""
-                print(f"{i}. {title} ({year})")
-                if venue:
-                    print(f"   📍 {venue}")
-        else:
-            print("No publications found for this user.")
+    logger.info(f"🔍 Searching for {firstname} {lastname} in Faculty180...")
+    if early_exit:
+        logger.info(f"⚡ Using optimized search (max {max_users} users, early exit enabled)")
     else:
-        print(f"\n❌ Could not find {firstname} {lastname} in Faculty180")
-        print("\nPossible reasons:")
-        print("- Name might be spelled differently")
-        print("- User might not have any activities recorded")
-        print("- User might be in a different database/tenant")
-        print("\nTry contacting your Faculty180 administrator for the correct user ID.")
+        logger.info(f"🔍 Using exhaustive search (max {max_users} users)")
+    
+    start_time = time.time()
+    user_ids = find_user(max_users=max_users, early_exit=early_exit)
+    search_time = time.time() - start_time
+
+    if user_ids:
+        logger.info(f"\n🎉 Search completed in {search_time:.2f} seconds! Found {len(user_ids)} user(s)")
+        if len(user_ids) == 1:
+            logger.info(f"✅ Verified user: {firstname} {lastname} (ID: {user_ids[0]})")
+        else:
+            logger.info(f"⚠️  Multiple users found. Please review the results above to identify the correct user.")
+    else:
+        logger.info(f"\n❌ Could not find {firstname} {lastname} in Faculty180 ({search_time:.2f}s)")
+        logger.info("\nPossible reasons:")
+        logger.info("- Name might be spelled differently")
+        logger.info("- User might not have any activities recorded")
+        logger.info("- User might be in a different database/tenant")
+        logger.info("\nTry: MAX_USERS=10 EARLY_EXIT=false python get_user.py (for exhaustive search)")
+        logger.info("Or contact your Faculty180 administrator for the correct user ID.")
