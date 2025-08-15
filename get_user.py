@@ -22,11 +22,11 @@ def find_user_id():
 
     firstname = os.getenv("FIRSTNAME")
     lastname = os.getenv("LASTNAME")
-    
+
     if not firstname or not lastname:
         print("Error: FIRSTNAME and LASTNAME environment variables must be set")
         return None
-    
+
     print(f"Searching for {firstname} {lastname} in Faculty180 activity data...")
 
     try:
@@ -70,8 +70,12 @@ def find_user_id():
 
                         # Also check if both first and last names appear separately
                         if not found_match:
-                            if (firstname.lower() in activity_str and lastname.lower() in activity_str) or (
-                                firstname.lower() in fields_str and lastname.lower() in fields_str
+                            if (
+                                firstname.lower() in activity_str
+                                and lastname.lower() in activity_str
+                            ) or (
+                                firstname.lower() in fields_str
+                                and lastname.lower() in fields_str
                             ):
                                 found_match = True
 
@@ -87,7 +91,10 @@ def find_user_id():
                                     value_lower = value.lower()
                                     if any(
                                         name in value_lower
-                                        for name in [firstname.lower(), lastname.lower()]
+                                        for name in [
+                                            firstname.lower(),
+                                            lastname.lower(),
+                                        ]
                                     ):
                                         print(f"   {key}: {value}")
 
@@ -167,11 +174,11 @@ def find_user_id():
 if __name__ == "__main__":
     firstname = os.getenv("FIRSTNAME")
     lastname = os.getenv("LASTNAME")
-    
+
     if not firstname or not lastname:
         print("Error: Please set FIRSTNAME and LASTNAME environment variables")
         exit(1)
-    
+
     print(f"🔍 Searching for {firstname} {lastname} in Faculty180...")
     user_id = find_user_id()
 
@@ -182,7 +189,9 @@ if __name__ == "__main__":
         publications = result.get("publications", [])
 
         if publications:
-            print(f"\n📚 Found {len(publications)} publications for {firstname} {lastname}:")
+            print(
+                f"\n📚 Found {len(publications)} publications for {firstname} {lastname}:"
+            )
             for i, pub in enumerate(publications, 1):
                 title = pub.get("title") or "(untitled)"
                 year = pub.get("year") or "n.d."

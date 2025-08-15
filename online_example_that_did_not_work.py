@@ -6,6 +6,7 @@ Find a curl example - this python code generates the necessary header
 and executes the curl command.
 Result: Access denied.
 """
+
 import base64
 import hmac
 import os
@@ -41,12 +42,18 @@ authorization_header = f"INTF {public_key}:{signed_hash}"
 
 # Construct curl command
 curl_command = [
-    "curl", "-X", "GET",
-    "-H", "Accept: application/json",
-    "-H", f"TimeStamp: {timestamp_string}",
-    "-H", f"Authorization: {authorization_header}",
-    "-H", f"INTF-DatabaseID: {database_id}",
-    f"https://faculty180.interfolio.com/api.php{request_string}"
+    "curl",
+    "-X",
+    "GET",
+    "-H",
+    "Accept: application/json",
+    "-H",
+    f"TimeStamp: {timestamp_string}",
+    "-H",
+    f"Authorization: {authorization_header}",
+    "-H",
+    f"INTF-DatabaseID: {database_id}",
+    f"https://faculty180.interfolio.com/api.php{request_string}",
 ]
 
 # Execute curl command and capture output
