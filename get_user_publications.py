@@ -26,7 +26,7 @@ class InterfolioPublicationRetriever:
             print(f"Fetching data for user {user_id}...")
             user_data = self.far.get_user(user_id=str(user_id))
             print(f"User data retrieved successfully: {user_data}")  # It's a count! :(
-            
+
             # And then this is wrong:
             # try:
             #     activity_data = self.far.get_user_data()  # Seems to be EVERYBODY's data.
@@ -35,9 +35,9 @@ class InterfolioPublicationRetriever:
             #     print(f"Failed to retrieve activity data: {activity_error}")
             #     print("This might be due to empty API response or API access issues")
             #     activity_data = []
-            
+
             # user_publications = [
-            #     activity for activity in activity_data 
+            #     activity for activity in activity_data
             #     if activity.get('user_id') == str(user_id) and
             #     activity.get('activity_type') in ['publication', 'scholarly_work']
             # ]
@@ -50,6 +50,7 @@ class InterfolioPublicationRetriever:
             print(f"Error for user {user_id}: {e}")
             print(f"Error type: {type(e).__name__}")
             import traceback
+
             traceback.print_exc()
             return None
 

@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 # ===========================
 # LOGGING CONFIGURATION
 # ===========================
@@ -35,13 +36,14 @@ def setup_logging():
     """Configure logging with both console and file output."""
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
+        format="%(asctime)s - %(levelname)s - %(message)s",
         handlers=[
             logging.StreamHandler(sys.stdout),
-            logging.FileHandler('user_fetch.log', encoding='utf-8')
-        ]
+            logging.FileHandler("user_fetch.log", encoding="utf-8"),
+        ],
     )
     return logging.getLogger(__name__)
+
 
 logger = setup_logging()
 
@@ -105,7 +107,9 @@ API_MAP = {
 }
 
 
-def generate_auth_header(method: str, request_string: str, timestamp: Optional[str] = None) -> tuple[str, str]:
+def generate_auth_header(
+    method: str, request_string: str, timestamp: Optional[str] = None
+) -> tuple[str, str]:
     """Generate HMAC Authorization header matching working code format."""
     if timestamp is None:
         timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
@@ -115,13 +119,11 @@ def generate_auth_header(method: str, request_string: str, timestamp: Optional[s
 
     # Compute HMAC-SHA1
     encrypted_string = hmac.new(
-        PRIVATE_KEY.encode('utf-8'), 
-        verb_request_string.encode('utf-8'), 
-        hashlib.sha1
+        PRIVATE_KEY.encode("utf-8"), verb_request_string.encode("utf-8"), hashlib.sha1
     ).digest()
 
     # Base64 encode the signature
-    signature = base64.b64encode(encrypted_string).decode('utf-8')
+    signature = base64.b64encode(encrypted_string).decode("utf-8")
 
     # Construct Authorization header with INTF prefix
     auth_header = f"INTF {PUBLIC_KEY}:{signature}"
@@ -129,7 +131,12 @@ def generate_auth_header(method: str, request_string: str, timestamp: Optional[s
     return auth_header, timestamp
 
 
-async def fetch_page(client: httpx.AsyncClient, system: str, page: int = 1, limit: int = DEFAULT_PAGE_SIZE) -> dict:
+async def fetch_page(
+    client: httpx.AsyncClient,
+    system: str,
+    page: int = 1,
+    limit: int = DEFAULT_PAGE_SIZE,
+) -> dict:
     """Fetch a single page of user data from the chosen Interfolio system."""
     if system not in API_MAP:
         raise ValueError(f"Unknown system '{system}'. Use RPT, FS, or FAR.")
@@ -178,100 +185,110 @@ def extract_users_from_response(page_data: Union[dict, list]) -> List[dict]:
     """Extract users from API response, handling different response formats."""
     if isinstance(page_data, list):
         return page_data
-    
+
     if isinstance(page_data, dict):
         # Check common pagination response formats
         for key in ["data", "users", "results"]:
             if key in page_data:
                 return page_data[key]
-        
+
         # If no standard pagination keys, treat dict as single user
         return [page_data] if page_data else []
-    
+
     return []
 
 
-async def fetch_users_concurrent(system: str, limit: int = DEFAULT_PAGE_SIZE) -> List[dict]:
+async def fetch_users_concurrent(
+    system: str, limit: int = DEFAULT_PAGE_SIZE
+) -> List[dict]:
     """Fetch all users with concurrent page requests for improved performance."""
     global collected_users
     collected_users = []
-    
+
     timeout = httpx.Timeout(TIMEOUT)
     limits = httpx.Limits(max_keepalive_connections=10, max_connections=20)
-    
+
     async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
         # First, fetch page 1 to understand the data structure
         logger.info(f"Fetching first page from {system}...")
         try:
             first_page_data = await fetch_page(client, system, 1, limit)
             first_page_users = extract_users_from_response(first_page_data)
-            
+
             if not first_page_users:
                 logger.info("No users found.")
                 return []
-            
+
             collected_users.extend(first_page_users)
             logger.info(f"Page 1: Found {len(first_page_users)} users")
-            
+
             # If we got fewer results than the limit, we're done
             if len(first_page_users) < limit:
-                logger.info(f"Only one page of data. Total: {len(collected_users)} users")
+                logger.info(
+                    f"Only one page of data. Total: {len(collected_users)} users"
+                )
                 return collected_users
-            
+
         except Exception as e:
             logger.error(f"Failed to fetch first page: {e}")
             return []
-        
+
         # Fetch remaining pages concurrently
         page = 2
         while True:
             # Create tasks for concurrent page fetching
             tasks = []
             page_numbers = []
-            
+
             for i in range(CONCURRENT_PAGES):
                 current_page = page + i
                 tasks.append(fetch_page(client, system, current_page, limit))
                 page_numbers.append(current_page)
-            
-            logger.info(f"Fetching pages {page_numbers[0]}-{page_numbers[-1]} concurrently...")
-            
+
+            logger.info(
+                f"Fetching pages {page_numbers[0]}-{page_numbers[-1]} concurrently..."
+            )
+
             try:
                 # Execute concurrent requests
                 results = await asyncio.gather(*tasks, return_exceptions=True)
-                
+
                 pages_with_data = 0
                 for i, result in enumerate(results):
                     current_page = page_numbers[i]
-                    
+
                     if isinstance(result, Exception):
                         logger.warning(f"Failed to fetch page {current_page}: {result}")
                         continue
-                    
+
                     users = extract_users_from_response(result)
                     if users:
                         collected_users.extend(users)
                         pages_with_data += 1
-                        logger.info(f"Page {current_page}: Found {len(users)} users (total: {len(collected_users)})")
+                        logger.info(
+                            f"Page {current_page}: Found {len(users)} users (total: {len(collected_users)})"
+                        )
                     else:
                         logger.debug(f"Page {current_page}: No users found")
-                    
+
                     # If this page had fewer results than the limit, we've reached the end
                     if len(users) < limit:
-                        logger.info(f"Page {current_page} had {len(users)} users (less than limit). Stopping.")
+                        logger.info(
+                            f"Page {current_page} had {len(users)} users (less than limit). Stopping."
+                        )
                         return collected_users
-                
+
                 # If no pages had data, we're done
                 if pages_with_data == 0:
                     logger.info("No more data found. Stopping pagination.")
                     break
-                    
+
                 page += CONCURRENT_PAGES
-                
+
             except Exception as e:
                 logger.error(f"Error during concurrent fetching: {e}")
                 break
-    
+
     logger.info(f"Finished! Collected {len(collected_users)} total users.")
     return collected_users
 
@@ -280,7 +297,7 @@ def fetch_users(system: str, limit: int = DEFAULT_PAGE_SIZE):
     """Fetch all user data from the chosen Interfolio system using pagination."""
     logger.info(f"Fetching users from {system} with concurrent pagination...")
     logger.info("💡 Press Ctrl+C at any time to save partial results and exit")
-    
+
     try:
         return asyncio.run(fetch_users_concurrent(system, limit))
     except KeyboardInterrupt:
