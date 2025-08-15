@@ -227,7 +227,7 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
 
     if len(sys.argv) != 2:
-        sys.exit("Usage: python get_users.py <RPT|FS|FAR>")
+        sys.exit("Usage: python get_all_users.py <RPT|FS|FAR>")
 
     system = sys.argv[1].upper()
 

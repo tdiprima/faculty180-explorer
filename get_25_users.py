@@ -1,12 +1,12 @@
 """
-clean_user_extractor.py
-Simple, focused script to extract and display Interfolio user data.
-Filters for internal users (external_user=false) and displays key information.
+Extract and display Interfolio user data.
+Hand-roll HMAC authentication headers.
+Hit the endpoint.
 
 Usage:
-    python clean_user_extractor.py RPT
-    python clean_user_extractor.py FS
-    python clean_user_extractor.py FAR
+    python get_25_users.py RPT
+    python get_25_users.py FS
+    python get_25_users.py FAR
 """
 
 import base64
@@ -103,21 +103,10 @@ def display_users(data, system):
         print("[INFO] No users found in the response")
         return
 
-    # Filter for internal users only (external_user=false)
-    # and exclude Applicants and users with no role
-    internal_users = [
-        user
-        for user in users
-        if not user.get("external_user", True)
-        and user.get("role") not in ["Applicant", None, "None", ""]
-    ]
-
     print(f"\n{'='*60}")
-    print(f"{system} FILTERED USERS ({len(internal_users)} of {len(users)} total)")
-    print(f"Showing: internal users, excluding Applicants and users without roles")
-    print(f"{'='*60}")
+    print(f"Showing: {len(users)} users")
 
-    for i, user in enumerate(internal_users, 1):
+    for i, user in enumerate(users, 1):
         print(f"\n--- USER {i} ---")
 
         # Basic user information
@@ -148,12 +137,12 @@ def display_users(data, system):
 
         print("-" * 40)
 
-    print(f"\n[INFO] Displayed {len(internal_users)} internal users")
+    print(f"\n[INFO] Displayed {len(users)} users")
 
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        sys.exit("Usage: python clean_user_extractor.py <RPT|FS|FAR>")
+        sys.exit("Usage: python get_25_users.py <RPT|FS|FAR>")
 
     system = sys.argv[1].upper()
     results = fetch_users(system)
