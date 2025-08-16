@@ -51,7 +51,7 @@ logger = setup_logging()
 # CONFIGURATION
 # ===========================
 CONCURRENT_PAGES = 5  # Number of pages to fetch concurrently
-TIMEOUT = 30  # Request timeout in seconds
+TIMEOUT = 5  # Request timeout in seconds
 DEFAULT_PAGE_SIZE = 100
 
 # Global variables for signal handling
